@@ -1,0 +1,229 @@
+Description: >
+  The Resources where our WebApp will work on
+
+Parameters:
+
+  EnvironmentName:
+     Description: Our Environment Name
+     Type: String
+
+Resources:
+
+  LBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: This SG is to be assosiated with the Load Balancer
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${EnvironmentName}-VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: This SG is to be assosiated with the WebServers
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${EnvironmentName}-VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535 
+        CidrIp: 0.0.0.0/0
+  
+  # This Security Group only Works allows any Puplic IP Adress, Change the CidrIP below to fit your needs # 
+  BastionHostSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: This SG is to be assosiated with the Bastion Host Instance
+      VpcId:
+        Fn::ImportValue:
+          !Sub ${EnvironmentName}-VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+
+  S3ReadOnlyEC2:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        !Sub ${EnvironmentName}-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        -   Effect: Allow
+            Principal:
+                Service:
+                - ec2.amazonaws.com
+            Action:
+            - sts:AssumeRole
+      Path: "/"
+
+  RolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AmazonS3ReadOnlyAccess
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - 
+          Effect: Allow
+          Action: 
+          -   s3:Put*
+          -   s3:Get*
+          -   s3:List* 
+          Resource: 
+          -   arn:aws:s3:::project2-webapp-udagram   # Change this ARN to your S3 ARN#
+          -   arn:aws:s3:::project2-webapp-udagram/*
+      Roles:
+      -   Ref: S3ReadOnlyEC2
+
+  WebAPPInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: S3ReadOnlyEC2
+
+  BastionHostInstance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: ami-0892d3c7ee96c0bf7
+      InstanceType: t2.small
+      IamInstanceProfile: !Ref WebAPPInstanceProfile
+      # KeyName: Add an RSA SSH Key to be able to SSH into the Instance.
+      NetworkInterfaces: 
+      - AssociatePublicIpAddress: "true"
+        DeviceIndex: "0"
+        GroupSet: 
+          - Ref: "BastionHostSecGroup"
+        SubnetId: 
+          Fn::ImportValue:
+            !Sub ${EnvironmentName}-PUB1-SN
+      Tags: 
+        - Key: Name
+          Value: Bastion Host
+      
+
+  # This Launch Configuration uses an Ubuntu AMI located in the us-west-2 Region (USA - Oregon) # 
+  # Change the S3 Bucket URL below #
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: ami-0892d3c7ee96c0bf7
+      SecurityGroups:
+      - Ref: WebServerSG
+      InstanceType: t3.medium
+      IamInstanceProfile: !Ref WebAPPInstanceProfile
+      # KeyName: Add an RSA SSH Key to be able to SSH into the Instance if needed for troubleshooting.    
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install -y apache2
+          apt-get install -y awscli
+          systemctl start apache2
+          systemctl enable apache2
+          ufw allow 'Apache Full'
+          cd /var/www/html
+          aws s3 cp s3://project2-webapp-udagram/WebApplication.zip
+          unzip -o WebApplication.zip
+      BlockDeviceMappings:
+      - DeviceName: "/dev/sdk"
+        Ebs:
+          VolumeSize: '10'
+          
+  WebAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+      - Fn::ImportValue: 
+          !Sub "${EnvironmentName}-PRIV-NETS"
+      LaunchConfigurationName:
+        Ref: LaunchConfiguration
+      MinSize: '4'
+      DesiredCapacity: '4'
+      MaxSize: '6'
+      TargetGroupARNs:
+      - Ref: WebTargetGroup
+      Tags:
+      - Key: Name
+        Value: WebServer Instance
+        PropagateAtLaunch: "true"
+      
+  WebLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+      - Fn::ImportValue: !Sub "${EnvironmentName}-PUB1-SN"
+      - Fn::ImportValue: !Sub "${EnvironmentName}-PUB2-SN"
+      SecurityGroups:
+      - Ref: LBSecurityGroup
+    
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: WebTargetGroup
+      LoadBalancerArn:
+        Ref: WebLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  
+  LoadBalancerRule:
+      Type: AWS::ElasticLoadBalancingV2::ListenerRule
+      Properties:
+        Actions:
+        - Type: forward
+          TargetGroupArn: !Ref 'WebTargetGroup'
+        Conditions:
+        - Field: path-pattern
+          Values: [/]
+        ListenerArn: !Ref 'LoadBalancerListener'
+        Priority: 1
+
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: 
+        Fn::ImportValue:
+          Fn::Sub: "${EnvironmentName}-VPC"
+
+Outputs:
+# This Output to easily have the Load Balancer's URL in the Outputs section #
+  WebAppLoadBalancerDNSName:
+        Description: the URL of our LoadBalancers
+        Value: !Join [ "", [ 'http://', !GetAtt .DNSName ]]
+        Export:
+            Name: !Sub ${EnvironmentName}-LB-DNSName
