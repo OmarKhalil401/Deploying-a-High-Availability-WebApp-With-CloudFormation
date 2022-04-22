@@ -55,8 +55,8 @@ To delete the infrastructure after verifying that it works, run the following co
 ## Appendix
 
 While Creating the Servers Infrastructure, pay attention to your AWS EC2 vCPUs Limits, 
-each account has a default soft limit of 8 vCPUs, which you have to contact AWS Support to extend that limit to meet your needs.
+each account has a default soft limit of 8 vCPUs, and you have to contact AWS Support to extend that limit to meet your needs.
 
-For more information please visit the [EC2 Managment Documentation](https://us-west-2.console.aws.amazon.com/ec2/v2/home?region=us-west-2#Limits:) <br/>
+For more information please visit the [EC2 Management Documentation](https://us-west-2.console.aws.amazon.com/ec2/v2/home?region=us-west-2#Limits:) <br/>
 And the [EC2 vCPU Calculator](https://us-west-2.console.aws.amazon.com/ec2/v2/home?region=us-west-2#LimitsCalculator:)
 
