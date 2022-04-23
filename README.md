@@ -32,7 +32,7 @@ The second is to deploy the servers
 ### Verify deployment
 
 To check whether the web application is running,
-follow the web application public URL, which could be found in the output tab in the CloudFormation stack.
+follow the web application public URL, which could be found in the output tab in the CloudFormation Servers stack.
 
 
 ### Delete Infrastructure
